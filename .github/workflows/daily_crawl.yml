@@ -1,0 +1,46 @@
+name: Daily CR Crawl
+
+on:
+  schedule:
+    - cron: '0 0 * * *' # 매일 UTC 00:00 (한국 시간 오전 9시) 실행
+  workflow_dispatch: # 수동 실행 버튼 추가
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install Google Chrome
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y google-chrome-stable
+
+    - name: Run Crawler
+      env:
+        CR_EMAIL: ${{ secrets.CR_EMAIL }}
+        CR_PASSWORD: ${{ secrets.CR_PASSWORD }}
+        # 텔레그램 알림을 원할 경우 아래 주석 해제 후 Secret 설정 필요
+        # TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+        # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      run: python cr_crawler_unified.py
+
+    - name: Commit and push changes
+      run: |
+        git config --local user.email "action@github.com"
+        git config --local user.name "GitHub Action"
+        git add CR_All_Data_Latest.xlsx CR_Delta_Report.xlsx
+        git commit -m "Auto-update CR ratings [skip ci]" || echo "No changes to commit"
+        git push
