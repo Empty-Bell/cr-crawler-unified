@@ -350,49 +350,68 @@ def extract_ratings(driver):
 # ============================================================
 def generate_delta_report(old_df, new_df, supercat_name):
     changes = []
-    pcol = 'Product' if 'Product' in new_df.columns else (new_df.columns[2] if len(new_df.columns) > 2 else None)
-    if pcol is None: return changes
+    
+    # 중복 제거 기준: SubCategory와 Product명을 결합하여 고유성 확보
+    # (단순 Product명만 쓰면 서로 다른 카테고리에 같은 이름의 모델(예: 'Samsung')이 있을 때 누락됨)
+    key_cols = ['SubCategory', 'Product']
+    if not all(col in new_df.columns for col in key_cols):
+        # 만약 컬럼이 없으면 기존처럼 Product 컬럼이라도 찾아서 시도
+        pcol = 'Product' if 'Product' in new_df.columns else (new_df.columns[2] if len(new_df.columns) > 2 else None)
+        if pcol is None: return changes
+        key_cols = [pcol]
 
-    old_m = old_df.drop_duplicates(subset=[pcol]).set_index(pcol) if not old_df.empty and pcol in old_df.columns else pd.DataFrame()
-    new_m = new_df.drop_duplicates(subset=[pcol]).set_index(pcol) if not new_df.empty and pcol in new_df.columns else pd.DataFrame()
+    # 비교를 위해 인덱스 설정 (기존 데이터와 신규 데이터 모두 동일한 키 사용)
+    # drop_duplicates를 하되, SubCategory+Product가 같은 것은 하나로 침
+    old_m = old_df.copy()
+    if not old_m.empty:
+        old_m = old_m.drop_duplicates(subset=key_cols).set_index(key_cols)
+    
+    new_m = new_df.copy()
+    if not new_m.empty:
+        new_m = new_m.drop_duplicates(subset=key_cols).set_index(key_cols)
 
-    skip = {'Extracted_At', 'Category', 'SuperCategory', 'Price', pcol}
-    comp_cols = [c for c in new_df.columns if c not in skip]
+    skip = {'Extracted_At', 'Category', 'SuperCategory', 'Price'}
+    comp_cols = [c for c in new_m.columns if c not in skip and c not in key_cols]
 
-    for model in new_m.index:
-        cat = new_m.loc[model, 'Category']
-        nt = new_m.loc[model, 'Extracted_At']
-        if old_m.empty or model not in old_m.index:
-            changes.append({"SuperCategory": supercat_name, "Category": cat, "Product": model,
+    for idx, row in new_m.iterrows():
+        # idx는 tuple (SubCategory, Product) 이거나 단일 string
+        model_name = idx[1] if isinstance(idx, tuple) else idx
+        sub_cat = idx[0] if isinstance(idx, tuple) else ""
+        cat = row['Category']
+        nt = row['Extracted_At']
+        
+        if old_m.empty or idx not in old_m.index:
+            changes.append({"SuperCategory": supercat_name, "Category": cat, "SubCategory": sub_cat, "Product": model_name,
                             "Attribute": "New Model", "Previous": "N/A", "New": "Added",
                             "Old Extracted_At": "N/A", "New Extracted_At": nt})
         else:
-            ot = old_m.loc[model, 'Extracted_At']
-            for col in comp_cols:
-                if col in new_m.columns and col in old_m.columns:
-                    val_new = new_m.loc[model, col]
-                    val_old = old_m.loc[model, col]
+            old_row = old_m.loc[idx]
+            if isinstance(old_row, pd.Series): # 단일 매칭
+                for col in comp_cols:
+                    if col in old_row:
+                        val_new = row[col]
+                        val_old = old_row[col]
 
-                    vn = str(val_new).strip()
-                    vo = str(val_old).strip()
-                    
-                    # 빈 값(결측치)들을 동일하게 취급 (예: 'nan', 'NA', 'None', '')
-                    empty_vals = {"", "nan", "na", "none", "n/a", "-"}
-                    if vn.lower() in empty_vals and vo.lower() in empty_vals:
-                        continue
-                    
-                    # 소수점 표시 형식 차이로 인한 오탐지 방지 (예: 84.0과 84를 같게 취급)
-                    if pd.notna(val_new) and pd.notna(val_old):
-                        try:
-                            if float(val_new) == float(val_old):
-                                continue
-                        except (ValueError, TypeError):
-                            pass
-                    
-                    if vn != vo:
-                        changes.append({"SuperCategory": supercat_name, "Category": cat, "Product": model,
-                                        "Attribute": col, "Previous": vo, "New": vn,
-                                        "Old Extracted_At": ot, "New Extracted_At": nt})
+                        vn = str(val_new).strip()
+                        vo = str(val_old).strip()
+                        
+                        # 빈 값(결측치) 처리
+                        empty_vals = {"", "nan", "na", "none", "n/a", "-"}
+                        if vn.lower() in empty_vals and vo.lower() in empty_vals:
+                            continue
+                        
+                        # 소수점 오차 방지
+                        if pd.notna(val_new) and pd.notna(val_old):
+                            try:
+                                if float(val_new) == float(val_old):
+                                    continue
+                            except (ValueError, TypeError):
+                                pass
+                        
+                        if vn != vo:
+                            changes.append({"SuperCategory": supercat_name, "Category": cat, "SubCategory": sub_cat, "Product": model_name,
+                                            "Attribute": col, "Previous": vo, "New": vn,
+                                            "Old Extracted_At": old_row['Extracted_At'], "New Extracted_At": nt})
     return changes
 
 # ============================================================
@@ -488,14 +507,22 @@ def main():
 
     all_data = {sc: [] for sc in SUPERCATEGORIES}
     prev_data = {}
-    if os.path.exists(FILE_PATH_ALL_DATA):
-        logger.info(f"이전 데이터 발견: {FILE_PATH_ALL_DATA}")
+    
+    # 이전 데이터 로드 로직 강화 및 로깅 추가
+    abs_data_path = os.path.abspath(FILE_PATH_ALL_DATA)
+    if os.path.exists(abs_data_path):
+        logger.info(f"이전 데이터 발견: {abs_data_path}")
         try:
-            xl = pd.ExcelFile(FILE_PATH_ALL_DATA)
+            xl = pd.ExcelFile(abs_data_path)
             for s in xl.sheet_names:
-                prev_data[s] = xl.parse(s)
+                df_loaded = xl.parse(s)
+                prev_data[s] = df_loaded
+                logger.info(f" - [{s}] 시트 로드 완료: {len(df_loaded)}개 모델")
         except Exception as e:
             logger.error(f"이전 데이터 파싱 에러: {e}")
+    else:
+        logger.warning(f"이전 데이터 파일을 찾을 수 없습니다: {abs_data_path}")
+        logger.warning("모든 데이터가 '신규 모델'로 인식됩니다.")
 
     extract_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -633,10 +660,12 @@ def main():
     ts_data_file = get_timestamped_filename(FILE_PATH_ALL_DATA)
     ts_report_file = get_timestamped_filename(FILE_PATH_REPORT)
     
+    # 저장 경로를 명확히 하기 위해 절대 경로 로깅
     shutil.copy(FILE_PATH_ALL_DATA, ts_data_file)
     shutil.copy(FILE_PATH_REPORT, ts_report_file)
 
-    logger.info(f"아카이빙 완료: {ts_data_file}, {ts_report_file}")
+    logger.info(f"아카이빙 완료: {os.path.abspath(ts_data_file)}")
+    logger.info(f"델타 리포트: {os.path.abspath(ts_report_file)}")
 
     # 이메일 발송
     send_email_report(all_data, changes, extract_time, ts_data_file, ts_report_file)
