@@ -44,6 +44,6 @@ jobs:
       run: |
         git config --local user.email "action@github.com"
         git config --local user.name "GitHub Action"
-        git add CR_All_Data_Latest.xlsx CR_Delta_Report.xlsx
+        git add *.xlsx
         git commit -m "Auto-update CR ratings [skip ci]" || echo "No changes to commit"
         git push

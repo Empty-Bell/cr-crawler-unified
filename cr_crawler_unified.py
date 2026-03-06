@@ -4,7 +4,7 @@ import csv
 import logging
 import random
 import tempfile
-import tempfile
+import shutil
 import smtplib
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -622,19 +622,21 @@ def main():
         df_old = prev_data.get(sc, pd.DataFrame())
         changes.extend(generate_delta_report(df_old, df_new, sc))
 
-    # 파일명 생성 (타임스탬프 포함)
+    # 1. 고정 파일명으로 저장 (다음 크롤링 시 이전 데이터로 비교하기 위해 필수)
+    save_checkpoint(all_data, FILE_PATH_ALL_DATA, prev_data)
+    if changes:
+        pd.DataFrame(changes).to_excel(FILE_PATH_REPORT, index=False)
+    else:
+        pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(FILE_PATH_REPORT, index=False)
+
+    # 2. 타임스탬프 파일명으로 저장 (아카이빙 및 이메일용)
     ts_data_file = get_timestamped_filename(FILE_PATH_ALL_DATA)
     ts_report_file = get_timestamped_filename(FILE_PATH_REPORT)
-
-    # 로컬 아카이빙 저장
-    save_checkpoint(all_data, ts_data_file, prev_data)
     
-    if changes:
-        pd.DataFrame(changes).to_excel(ts_report_file, index=False)
-        logger.info(f"변경사항 {len(changes)}건 → {ts_report_file}")
-    else:
-        pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(ts_report_file, index=False)
-        logger.info(f"변경사항 없음 → {ts_report_file}")
+    shutil.copy(FILE_PATH_ALL_DATA, ts_data_file)
+    shutil.copy(FILE_PATH_REPORT, ts_report_file)
+
+    logger.info(f"아카이빙 완료: {ts_data_file}, {ts_report_file}")
 
     # 이메일 발송
     send_email_report(all_data, changes, extract_time, ts_data_file, ts_report_file)
