@@ -32,9 +32,10 @@ jobs:
       env:
         CR_EMAIL: ${{ secrets.CR_EMAIL }}
         CR_PASSWORD: ${{ secrets.CR_PASSWORD }}
-        # 텔레그램 알림을 원할 경우 아래 주석 해제 후 Secret 설정 필요
-        # TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        # TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        SENDER_EMAIL: ${{ secrets.SENDER_EMAIL }}
+        SENDER_PASSWORD: ${{ secrets.SENDER_PASSWORD }}
+        SMTP_SERVER: "smtp.gmail.com"
+        SMTP_PORT: 587
       run: python cr_crawler_unified.py
 
     - name: Commit and push changes

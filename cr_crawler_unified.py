@@ -4,6 +4,12 @@ import csv
 import logging
 import random
 import tempfile
+import tempfile
+import smtplib
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
+from email.mime.base import MIMEBase
+from email import encoders
 from datetime import datetime
 import pandas as pd
 from selenium import webdriver
@@ -103,6 +109,12 @@ SUPERCATEGORIES = {
 
 FILE_PATH_ALL_DATA = "CR_All_Data_Latest.xlsx"
 FILE_PATH_REPORT = "CR_Delta_Report.xlsx"
+
+def get_timestamped_filename(base_name):
+    """파일명 뒤에 _YYYYMMDDHHMM 형식을 붙입니다."""
+    ts = datetime.now().strftime("%y%m%d%H%M")
+    name, ext = os.path.splitext(base_name)
+    return f"{name}_{ts}{ext}"
 
 # ============================================================
 # 드라이버 설정 (공유 프로필 사용하여 로그인 유지)
@@ -402,6 +414,71 @@ def save_checkpoint(data_dict, file_path, prev_data):
     except Exception as e:
         logger.error(f"Checkpoint save error: {e}")
 
+def send_email_report(all_data, changes, extract_time, data_file, report_file):
+    """크롤링 결과를 이메일로 송부합니다."""
+    smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    sender_email = os.getenv("SENDER_EMAIL")
+    sender_password = os.getenv("SENDER_PASSWORD") # 앱 비밀번호 권장
+    receiver_email = "jongbin.yun@samsung.com"
+
+    if not sender_email or not sender_password:
+        logger.warning("이메일 발신 정보(SENDER_EMAIL/PASSWORD)가 설정되지 않아 메일을 보낼 수 없습니다.")
+        return
+
+    # 요약 정보 계산
+    total_categories = sum(len(v) for v in SUPERCATEGORIES.values())
+    collected_count = sum(len(records) for records in all_data.values())
+    success_count = sum(1 for sc in all_data.values() for _ in sc if _ ) # 실제 데이터가 있는 카테고리 수 등 필요시 수정
+    
+    # 델타 요약
+    new_models = len([c for c in changes if c.get("Attribute") == "New Model"])
+    updates = len(changes) - new_models
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = f"[CR Crawl] 결과 요약 ({extract_time})"
+
+    body = f"""
+    <h3>Consumer Report 크롤링 결과 요약</h3>
+    <ul>
+        <li><b>수행 일시:</b> {extract_time}</li>
+        <li><b>수집 데이터양:</b> 총 {collected_count}개 모델</li>
+        <li><b>성공률:</b> {collected_count}개 모델 수집됨 (대상 카테고리: {total_categories}개)</li>
+    </ul>
+    
+    <h4>[델타 결과 요약]</h4>
+    <ul>
+        <li><b>신규 모델 추가:</b> {new_models}건</li>
+        <li><b>기존 모델 변경:</b> {updates}건</li>
+        <li><b>총 변경 사항:</b> {len(changes)}건</li>
+    </ul>
+    
+    <p>상세 내용은 첨부된 파일을 확인해 주세요.</p>
+    """
+    msg.attach(MIMEText(body, 'html'))
+
+    # 파일 첨부
+    for f_path in [data_file, report_file]:
+        if os.path.exists(f_path):
+            with open(f_path, "rb") as attachment:
+                part = MIMEBase("application", "octet-stream")
+                part.set_payload(attachment.read())
+            encoders.encode_base64(part)
+            part.add_header("Content-Disposition", f"attachment; filename= {os.path.basename(f_path)}")
+            msg.attach(part)
+
+    try:
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
+        server.quit()
+        logger.info(f"이메일 리포트 발송 완료: {receiver_email}")
+    except Exception as e:
+        logger.error(f"이메일 발송 에러: {e}")
+
 # ============================================================
 # MAIN
 # ============================================================
@@ -545,14 +622,24 @@ def main():
         df_old = prev_data.get(sc, pd.DataFrame())
         changes.extend(generate_delta_report(df_old, df_new, sc))
 
-    if changes:
-        pd.DataFrame(changes).to_excel(FILE_PATH_REPORT, index=False)
-        logger.info(f"변경사항 {len(changes)}건 → {FILE_PATH_REPORT}")
-    else:
-        pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(FILE_PATH_REPORT, index=False)
-        logger.info(f"변경사항 없음 → {FILE_PATH_REPORT}")
+    # 파일명 생성 (타임스탬프 포함)
+    ts_data_file = get_timestamped_filename(FILE_PATH_ALL_DATA)
+    ts_report_file = get_timestamped_filename(FILE_PATH_REPORT)
 
-    logger.info("통합 크롤링 완료!")
+    # 로컬 아카이빙 저장
+    save_checkpoint(all_data, ts_data_file, prev_data)
+    
+    if changes:
+        pd.DataFrame(changes).to_excel(ts_report_file, index=False)
+        logger.info(f"변경사항 {len(changes)}건 → {ts_report_file}")
+    else:
+        pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(ts_report_file, index=False)
+        logger.info(f"변경사항 없음 → {ts_report_file}")
+
+    # 이메일 발송
+    send_email_report(all_data, changes, extract_time, ts_data_file, ts_report_file)
+
+    logger.info("통합 크롤링 및 아카이빙 완료!")
 
 if __name__ == "__main__":
     main()
