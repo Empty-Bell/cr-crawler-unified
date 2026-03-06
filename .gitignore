@@ -1,6 +1,7 @@
 .env
 __pycache__/
-*.xlsx
+# *.xlsx # Remove global ignore to allow results to be pushed
+CR_All_Data_temp.xlsx # Keep ignoring temp files
 *.csv
 *.html
 *.txt
