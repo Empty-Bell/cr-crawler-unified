@@ -129,8 +129,9 @@ def setup_driver(profile_path):
         chrome_options.add_argument("--disable-dev-shm-usage")
         chrome_options.add_argument("--disable-gpu")
         logger.info("클라우드 환경 감지: 헤드리스 모드로 실행합니다.")
-    else:
-        chrome_options.add_argument(f"user-data-dir={profile_path}")
+    
+    # 세션 유지를 위해 공통적으로 프로필 디렉토리 적용
+    chrome_options.add_argument(f"user-data-dir={profile_path}")
 
     chrome_options.add_argument("--disable-blink-features=AutomationControlled")
     chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
