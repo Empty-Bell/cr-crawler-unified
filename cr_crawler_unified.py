@@ -450,6 +450,7 @@ def generate_summary(all_data):
                 best_row = group.nsmallest(1, 'numeric_rank')
             
             best_brand = best_row['Brand'].iloc[0] if not best_row.empty else "N/A"
+            best_prod = best_row['Product'].iloc[0] if not best_row.empty else "N/A"
             best_score = best_row['Overall Score'].iloc[0] if not best_row.empty else "N/A"
             best_rel = best_row[rel_col].iloc[0] if rel_col and not best_row.empty else ""
             best_sat = best_row[sat_col].iloc[0] if sat_col and not best_row.empty else ""
@@ -459,11 +460,13 @@ def generate_summary(all_data):
             if not samsung_dacor.empty:
                 samsung_best = samsung_dacor.nsmallest(1, 'numeric_rank').iloc[0]
                 s_rank = samsung_best['Rank']
+                s_prod = samsung_best['Product'] if 'Product' in samsung_best else ""
                 s_score = samsung_best['Overall Score']
                 s_rel = samsung_best[rel_col] if rel_col else ""
                 s_sat = samsung_best[sat_col] if sat_col else ""
             else:
                 s_rank = ""
+                s_prod = ""
                 s_score = ""
                 s_rel = ""
                 s_sat = ""
@@ -473,10 +476,12 @@ def generate_summary(all_data):
                 "Category": cat,
                 "SubCategory": subcat,
                 "Samsung_Rank": s_rank,
+                "Samsung_Product": s_prod,
                 "Samsung_Overall Score": s_score,
                 "Samsung_Brand Reliability": s_rel,
                 "Samsung_Owner Satisfaction": s_sat,
                 "Best_Brand": best_brand,
+                "Best_Product": best_prod,
                 "Best_Overall Score": best_score,
                 "Best_Brand Reliability": best_rel,
                 "Best_Owner Satisfaction": best_sat
