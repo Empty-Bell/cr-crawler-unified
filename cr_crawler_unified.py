@@ -408,8 +408,9 @@ def generate_delta_report_v2(old_df, new_df):
     actual_owner_sat = next((c for c in all_cols if "Owner Satisfaction" in c), None)
     brand_cols = [c for c in [actual_brand_rel, actual_owner_sat] if c]
 
-    # Lab Test 대상 컬럼들
-    lab_test_cols = [c for c in all_cols if c not in SKIP_COLS and c not in BRAND_METRIC_COLS and "Brand Reliability" not in c and "Owner Satisfaction" not in c]
+    # Lab Test 대상 컬럼들 (브랜드 메트릭 및 요약 컬럼 제외)
+    lab_test_cols = [c for c in all_cols if c not in SKIP_COLS and c not in BRAND_METRIC_COLS 
+                      and not c.startswith("Samsung_") and not c.startswith("Best_")]
 
     # 교집합(기존 모델) 비교
     common_idx = old_m.index.intersection(new_m.index)
@@ -423,8 +424,12 @@ def generate_delta_report_v2(old_df, new_df):
         for bc in brand_cols:
             if bc in row_old and bc in row_new:
                 vo, vn = str(row_old[bc]).strip(), str(row_new[bc]).strip()
-                if vo != vn and not (vo.lower() in ["nan", ""] and vn.lower() in ["nan", ""]):
-                    brand_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo, "New": vn})
+                # 빈 값 정규화
+                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-"] else vo
+                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-"] else vn
+                
+                if vo_n != vn_n:
+                    brand_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo_n, "New": vn_n})
                     b_changed.append(bc)
 
         # Case 2: Lab Test Evaluation
@@ -432,26 +437,33 @@ def generate_delta_report_v2(old_df, new_df):
         for lc in lab_test_cols:
             if lc in row_old and lc in row_new:
                 vo, vn = str(row_old[lc]).strip(), str(row_new[lc]).strip()
-                if vo != vn and not (vo.lower() in ["nan", ""] and vn.lower() in ["nan", ""]):
-                    # 수치 오차 무시 로직
+                # 빈 값 정규화
+                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-"] else vo
+                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-"] else vn
+                
+                if vo_n != vn_n:
+                    # 수치 오차 무시 로직 (둘 다 숫자일 때만)
                     try:
-                        if float(vo) == float(vn): continue
+                        if float(vo_n) == float(vn_n): continue
                     except: pass
-                    lab_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Attribute": lc, "Previous": vo, "New": vn})
+                    lab_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Attribute": lc, "Previous": vo_n, "New": vn_n})
                     l_changed.append(lc)
         
         # Case 3: Overall Score Only Change (1, 2번 변동이 없을 때만)
         if not b_changed and not l_changed:
             vo_s = str(row_old.get('Overall Score', '')).strip()
             vn_s = str(row_new.get('Overall Score', '')).strip()
-            if vo_s != vn_s and not (vo_s.lower() in ["nan", ""] and vn_s.lower() in ["nan", ""]):
+            vo_s = "" if vo_s.lower() in ["nan", "none", "", "n/a", "-"] else vo_s
+            vn_s = "" if vn_s.lower() in ["nan", "none", "", "n/a", "-"] else vn_s
+            
+            if vo_s != vn_s:
                 score_only_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Previous Score": vo_s, "New Score": vn_s})
 
     results["Brand_Metrics"] = pd.DataFrame(brand_changes).drop_duplicates() if brand_changes else pd.DataFrame()
     results["Lab_Test_Changes"] = pd.DataFrame(lab_changes)
     results["Score_Only_Changes"] = pd.DataFrame(score_only_changes)
 
-    # Case 4: Lab Test 항목 구성 변경
+    # Case 4: Lab Test 항목 구성 변경 (요약 컬럼 제외)
     col_diffs = []
     if not new_df.empty and not old_df.empty:
         for (sc, cat, sub), g_new in new_df.groupby(['SuperCategory', 'Category', 'SubCategory']):
@@ -459,8 +471,8 @@ def generate_delta_report_v2(old_df, new_df):
             if not g_old.empty:
                 added = set(g_new.columns) - set(g_old.columns)
                 removed = set(g_old.columns) - set(g_new.columns)
-                added = [a for a in added if a not in SKIP_COLS]
-                removed = [r for r in removed if r not in SKIP_COLS]
+                added = [a for a in added if a not in SKIP_COLS and not a.startswith("Samsung_") and not a.startswith("Best_")]
+                removed = [r for r in removed if r not in SKIP_COLS and not r.startswith("Samsung_") and not r.startswith("Best_")]
                 for a in added: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": a, "Change": "Added"})
                 for r in removed: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": r, "Change": "Removed"})
     results["Column_Config"] = pd.DataFrame(col_diffs)
@@ -727,6 +739,7 @@ def main():
         try:
             xl = pd.ExcelFile(abs_data_path)
             for s in xl.sheet_names:
+                if s == 'Summary': continue # 요약 시트는 비교 대상에서 제외
                 df_loaded = xl.parse(s)
                 prev_data[s] = df_loaded
                 logger.info(f" - [{s}] 시트 로드 완료: {len(df_loaded)}개 모델")
