@@ -424,12 +424,64 @@ def generate_delta_report(old_df, new_df, supercat_name):
                                             "Old Extracted_At": old_row['Extracted_At'], "New Extracted_At": nt})
     return changes
 
+def generate_summary(all_data):
+    """SuperCategory, Category, SubCategory별로 Samsung/Dacor 및 Best 브랜드 요약 정보를 생성합니다."""
+    summary_list = []
+    for sc, records in all_data.items():
+        if not records: continue
+        df = pd.DataFrame(records)
+        
+        # Rank를 숫자로 변환 (순위 비교용)
+        df['numeric_rank'] = pd.to_numeric(df['Rank'], errors='coerce')
+        
+        # Category와 SubCategory로 그룹핑
+        # SubCategory가 없는 경우 빈 문자열로 처리하여 그룹화
+        df['SubCategory'] = df['SubCategory'].fillna('')
+        groups = df.groupby(['Category', 'SubCategory'], sort=False)
+        
+        for (cat, subcat), group in groups:
+            # 1. 해당 그룹 최고의 제품 (Rank 1)
+            best_row = group[group['numeric_rank'] == 1]
+            if best_row.empty:
+                best_row = group.nsmallest(1, 'numeric_rank')
+            
+            best_brand = best_row['Brand'].iloc[0] if not best_row.empty else "N/A"
+            best_score = best_row['Overall Score'].iloc[0] if not best_row.empty else "N/A"
+            
+            # 2. Samsung 또는 Dacor 제품 중 최고 순위 찾기
+            samsung_dacor = group[group['Brand'].astype(str).str.upper().isin(['SAMSUNG', 'DACOR'])]
+            if not samsung_dacor.empty:
+                samsung_best = samsung_dacor.nsmallest(1, 'numeric_rank').iloc[0]
+                s_rank = samsung_best['Rank']
+                s_score = samsung_best['Overall Score']
+            else:
+                s_rank = ""
+                s_score = ""
+            
+            summary_list.append({
+                "SuperCategory": sc,
+                "Category": cat,
+                "SubCategory": subcat,
+                "Samsung_Rank": s_rank,
+                "Samsung_Overall Score": s_score,
+                "Best_Brand": best_brand,
+                "Best_Overall Score": best_score
+            })
+    
+    return pd.DataFrame(summary_list)
+
 # ============================================================
 # 체크포인트 저장
 # ============================================================
 def save_checkpoint(data_dict, file_path, prev_data):
+    summary_df = generate_summary(data_dict)
     try:
         with pd.ExcelWriter(file_path, engine='openpyxl') as writer:
+            # 1. Summary 시트 추가 (가장 앞)
+            if not summary_df.empty:
+                summary_df.to_excel(writer, sheet_name='Summary', index=False)
+            
+            # 2. 나머지 슈퍼카테고리별 시트
             for sc, records in data_dict.items():
                 if not records:
                     if prev_data and sc in prev_data:
@@ -469,6 +521,23 @@ def send_email_report(all_data, changes, extract_time, data_file, report_file):
     msg['To'] = receiver_email
     msg['Subject'] = f"[CR Crawl] 결과 요약 ({extract_time})"
 
+    # Summary 데이터 생성
+    summary_df = generate_summary(all_data)
+    summary_html = ""
+    if not summary_df.empty:
+        summary_html = "<h4>[Category Summary]</h4>"
+        # HTML 테이블 생성 및 스타일 적용
+        tbl_html = summary_df.to_html(index=False, border=1, justify='center', na_rep='')
+        tbl_html = tbl_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 12px; margin-bottom: 20px;"')
+        tbl_html = tbl_html.replace('<th', '<th style="background-color: #004684; color: white; border: 1px solid #ddd; padding: 8px; text-align: center;"')
+        tbl_html = tbl_html.replace('<td', '<td style="border: 1px solid #ddd; padding: 6px; text-align: center;"')
+        
+        # Samsung 브랜드 강조 (색상 등)
+        tbl_html = tbl_html.replace('Samsung', '<b style="color: #004684;">Samsung</b>')
+        tbl_html = tbl_html.replace('Dacor', '<b style="color: #004684;">Dacor</b>')
+        
+        summary_html += tbl_html
+
     body = f"""
     <h3>Consumer Report 크롤링 결과 요약</h3>
     <ul>
@@ -476,6 +545,8 @@ def send_email_report(all_data, changes, extract_time, data_file, report_file):
         <li><b>수집 데이터양:</b> 총 {collected_count}개 모델</li>
         <li><b>성공률:</b> {collected_count}개 모델 수집됨 (대상 카테고리: {total_categories}개)</li>
     </ul>
+
+    {summary_html}
     
     <h4>[델타 결과 요약]</h4>
     <ul>
