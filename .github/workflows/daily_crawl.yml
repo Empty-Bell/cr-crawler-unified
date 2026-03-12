@@ -2,7 +2,7 @@ name: Daily CR Crawl
 
 on:
   schedule:
-    - cron: '3 23 * * *' # 매일 UTC 23:03 (한국 시간 오전 8시 03분) 실행
+    - cron: '38 22 * * *' # 매일 UTC 22:38 (한국 시간 오전 7시 38분) 실행
   workflow_dispatch: # 수동 실행 버튼 추가
 
 jobs:
