@@ -434,8 +434,12 @@ def generate_summary(all_data):
         # Rank를 숫자로 변환 (순위 비교용)
         df['numeric_rank'] = pd.to_numeric(df['Rank'], errors='coerce')
         
+        # 유연한 컬럼 매칭 (Brand Reliability, Owner Satisfaction)
+        cols = df.columns
+        rel_col = next((c for c in cols if "Brand Reliability" in c), None)
+        sat_col = next((c for c in cols if "Owner Satisfaction" in c), None)
+
         # Category와 SubCategory로 그룹핑
-        # SubCategory가 없는 경우 빈 문자열로 처리하여 그룹화
         df['SubCategory'] = df['SubCategory'].fillna('')
         groups = df.groupby(['Category', 'SubCategory'], sort=False)
         
@@ -447,6 +451,8 @@ def generate_summary(all_data):
             
             best_brand = best_row['Brand'].iloc[0] if not best_row.empty else "N/A"
             best_score = best_row['Overall Score'].iloc[0] if not best_row.empty else "N/A"
+            best_rel = best_row[rel_col].iloc[0] if rel_col and not best_row.empty else ""
+            best_sat = best_row[sat_col].iloc[0] if sat_col and not best_row.empty else ""
             
             # 2. Samsung 또는 Dacor 제품 중 최고 순위 찾기
             samsung_dacor = group[group['Brand'].astype(str).str.upper().isin(['SAMSUNG', 'DACOR'])]
@@ -454,9 +460,13 @@ def generate_summary(all_data):
                 samsung_best = samsung_dacor.nsmallest(1, 'numeric_rank').iloc[0]
                 s_rank = samsung_best['Rank']
                 s_score = samsung_best['Overall Score']
+                s_rel = samsung_best[rel_col] if rel_col else ""
+                s_sat = samsung_best[sat_col] if sat_col else ""
             else:
                 s_rank = ""
                 s_score = ""
+                s_rel = ""
+                s_sat = ""
             
             summary_list.append({
                 "SuperCategory": sc,
@@ -464,8 +474,12 @@ def generate_summary(all_data):
                 "SubCategory": subcat,
                 "Samsung_Rank": s_rank,
                 "Samsung_Overall Score": s_score,
+                "Samsung_Brand Reliability": s_rel,
+                "Samsung_Owner Satisfaction": s_sat,
                 "Best_Brand": best_brand,
-                "Best_Overall Score": best_score
+                "Best_Overall Score": best_score,
+                "Best_Brand Reliability": best_rel,
+                "Best_Owner Satisfaction": best_sat
             })
     
     return pd.DataFrame(summary_list)
@@ -528,7 +542,7 @@ def send_email_report(all_data, changes, extract_time, data_file, report_file):
         summary_html = "<h4>[Category Summary]</h4>"
         # HTML 테이블 생성 및 스타일 적용
         tbl_html = summary_df.to_html(index=False, border=1, justify='center', na_rep='')
-        tbl_html = tbl_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 12px; margin-bottom: 20px;"')
+        tbl_html = tbl_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11px; margin-bottom: 20px;"')
         tbl_html = tbl_html.replace('<th', '<th style="background-color: #004684; color: white; border: 1px solid #ddd; padding: 8px; text-align: center;"')
         tbl_html = tbl_html.replace('<td', '<td style="border: 1px solid #ddd; padding: 6px; text-align: center;"')
         
