@@ -358,71 +358,171 @@ def extract_ratings(driver):
 # ============================================================
 # Delta 비교 분석
 # ============================================================
-def generate_delta_report(old_df, new_df, supercat_name):
-    changes = []
-    
-    # 중복 제거 기준: SubCategory와 Product명을 결합하여 고유성 확보
-    # (단순 Product명만 쓰면 서로 다른 카테고리에 같은 이름의 모델(예: 'Samsung')이 있을 때 누락됨)
-    key_cols = ['SubCategory', 'Product']
-    if not all(col in new_df.columns for col in key_cols):
-        # 만약 컬럼이 없으면 기존처럼 Product 컬럼이라도 찾아서 시도
-        pcol = 'Product' if 'Product' in new_df.columns else (new_df.columns[2] if len(new_df.columns) > 2 else None)
-        if pcol is None: return changes
-        key_cols = [pcol]
+def generate_delta_report_v2(old_df, new_df):
+    """
+    7가지 케이스에 대한 델타 리포트를 생성합니다.
+    결과는 {시트명: 데이터프레임} 형태의 딕셔너리로 반환합니다.
+    """
+    results = {
+        "Brand_Metrics": pd.DataFrame(),
+        "Lab_Test_Changes": pd.DataFrame(),
+        "Score_Only_Changes": pd.DataFrame(),
+        "Column_Config": pd.DataFrame(),
+        "Samsung_Added": pd.DataFrame(),
+        "Samsung_Deleted": pd.DataFrame(),
+        "Rank1_Changes": pd.DataFrame()
+    }
 
-    # 비교를 위해 인덱스 설정 (기존 데이터와 신규 데이터 모두 동일한 키 사용)
-    # drop_duplicates를 하되, SubCategory+Product가 같은 것은 하나로 침
-    old_m = old_df.copy()
-    if not old_m.empty:
-        old_m = old_m.drop_duplicates(subset=key_cols).set_index(key_cols)
-    
-    new_m = new_df.copy()
-    if not new_m.empty:
-        new_m = new_m.drop_duplicates(subset=key_cols).set_index(key_cols)
+    if old_df.empty and new_df.empty:
+        return results
 
-    skip = {'Extracted_At', 'Category', 'SuperCategory', 'Price'}
-    comp_cols = [c for c in new_m.columns if c not in skip and c not in key_cols]
+    # 공통 비교 키
+    KEY_COLS = ['SuperCategory', 'Category', 'SubCategory', 'Brand', 'Product']
+    BRAND_METRIC_COLS = ["Brand Reliability", "Owner Satisfaction"]
+    # 비교에서 제외할 메타 컬럼들
+    SKIP_COLS = set(KEY_COLS) | {'Rank', 'Overall Score', 'Price', 'Extracted_At', 'n_rank', 'numeric_rank'}
+    TARGET_BRANDS = ['SAMSUNG', 'DACOR']
 
-    for idx, row in new_m.iterrows():
-        # idx는 tuple (SubCategory, Product) 이거나 단일 string
-        model_name = idx[1] if isinstance(idx, tuple) else idx
-        sub_cat = idx[0] if isinstance(idx, tuple) else ""
-        cat = row['Category']
-        nt = row['Extracted_At']
+    # 비교를 위해 인덱스 설정
+    def prepare_df(df):
+        if df.empty: return pd.DataFrame(columns=KEY_COLS).set_index(KEY_COLS)
+        d = df.copy()
+        # 키 컬럼 정규화
+        for c in KEY_COLS: 
+            if c in d.columns:
+                d[c] = d[c].fillna('').astype(str).str.strip()
+            else:
+                d[c] = ''
+        return d.drop_duplicates(subset=KEY_COLS).set_index(KEY_COLS)
+
+    old_m = prepare_df(old_df)
+    new_m = prepare_df(new_df)
+
+    brand_changes = []
+    lab_changes = []
+    score_only_changes = []
+
+    all_cols = list(set(old_m.columns) | set(new_m.columns))
+    # 브랜드 지표 유연한 매칭
+    actual_brand_rel = next((c for c in all_cols if "Brand Reliability" in c), None)
+    actual_owner_sat = next((c for c in all_cols if "Owner Satisfaction" in c), None)
+    brand_cols = [c for c in [actual_brand_rel, actual_owner_sat] if c]
+
+    # Lab Test 대상 컬럼들
+    lab_test_cols = [c for c in all_cols if c not in SKIP_COLS and c not in BRAND_METRIC_COLS and "Brand Reliability" not in c and "Owner Satisfaction" not in c]
+
+    # 교집합(기존 모델) 비교
+    common_idx = old_m.index.intersection(new_m.index)
+    for idx in common_idx:
+        row_old = old_m.loc[idx]
+        row_new = new_m.loc[idx]
+        sc, cat, sub, brand, prod = idx
+
+        # Case 1: Brand Metrics
+        b_changed = []
+        for bc in brand_cols:
+            if bc in row_old and bc in row_new:
+                vo, vn = str(row_old[bc]).strip(), str(row_new[bc]).strip()
+                if vo != vn and not (vo.lower() in ["nan", ""] and vn.lower() in ["nan", ""]):
+                    brand_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo, "New": vn})
+                    b_changed.append(bc)
+
+        # Case 2: Lab Test Evaluation
+        l_changed = []
+        for lc in lab_test_cols:
+            if lc in row_old and lc in row_new:
+                vo, vn = str(row_old[lc]).strip(), str(row_new[lc]).strip()
+                if vo != vn and not (vo.lower() in ["nan", ""] and vn.lower() in ["nan", ""]):
+                    # 수치 오차 무시 로직
+                    try:
+                        if float(vo) == float(vn): continue
+                    except: pass
+                    lab_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Attribute": lc, "Previous": vo, "New": vn})
+                    l_changed.append(lc)
         
-        if old_m.empty or idx not in old_m.index:
-            changes.append({"SuperCategory": supercat_name, "Category": cat, "SubCategory": sub_cat, "Product": model_name,
-                            "Attribute": "New Model", "Previous": "N/A", "New": "Added",
-                            "Old Extracted_At": "N/A", "New Extracted_At": nt})
-        else:
-            old_row = old_m.loc[idx]
-            if isinstance(old_row, pd.Series): # 단일 매칭
-                for col in comp_cols:
-                    if col in old_row:
-                        val_new = row[col]
-                        val_old = old_row[col]
+        # Case 3: Overall Score Only Change (1, 2번 변동이 없을 때만)
+        if not b_changed and not l_changed:
+            vo_s = str(row_old.get('Overall Score', '')).strip()
+            vn_s = str(row_new.get('Overall Score', '')).strip()
+            if vo_s != vn_s and not (vo_s.lower() in ["nan", ""] and vn_s.lower() in ["nan", ""]):
+                score_only_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Previous Score": vo_s, "New Score": vn_s})
 
-                        vn = str(val_new).strip()
-                        vo = str(val_old).strip()
-                        
-                        # 빈 값(결측치) 처리
-                        empty_vals = {"", "nan", "na", "none", "n/a", "-"}
-                        if vn.lower() in empty_vals and vo.lower() in empty_vals:
-                            continue
-                        
-                        # 소수점 오차 방지
-                        if pd.notna(val_new) and pd.notna(val_old):
-                            try:
-                                if float(val_new) == float(val_old):
-                                    continue
-                            except (ValueError, TypeError):
-                                pass
-                        
-                        if vn != vo:
-                            changes.append({"SuperCategory": supercat_name, "Category": cat, "SubCategory": sub_cat, "Product": model_name,
-                                            "Attribute": col, "Previous": vo, "New": vn,
-                                            "Old Extracted_At": old_row['Extracted_At'], "New Extracted_At": nt})
-    return changes
+    results["Brand_Metrics"] = pd.DataFrame(brand_changes).drop_duplicates() if brand_changes else pd.DataFrame()
+    results["Lab_Test_Changes"] = pd.DataFrame(lab_changes)
+    results["Score_Only_Changes"] = pd.DataFrame(score_only_changes)
+
+    # Case 4: Lab Test 항목 구성 변경
+    col_diffs = []
+    if not new_df.empty and not old_df.empty:
+        for (sc, cat, sub), g_new in new_df.groupby(['SuperCategory', 'Category', 'SubCategory']):
+            g_old = old_df[(old_df['SuperCategory']==sc) & (old_df['Category']==cat) & (old_df['SubCategory']==sub)]
+            if not g_old.empty:
+                added = set(g_new.columns) - set(g_old.columns)
+                removed = set(g_old.columns) - set(g_new.columns)
+                added = [a for a in added if a not in SKIP_COLS]
+                removed = [r for r in removed if r not in SKIP_COLS]
+                for a in added: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": a, "Change": "Added"})
+                for r in removed: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": r, "Change": "Removed"})
+    results["Column_Config"] = pd.DataFrame(col_diffs)
+
+    # Case 5/6: Samsung/Dacor 신규 및 삭제
+    sams_new = new_df[new_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not new_df.empty else pd.DataFrame()
+    sams_old = old_df[old_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not old_df.empty else pd.DataFrame()
+    
+    new_models = []
+    for _, row in sams_new.iterrows():
+        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
+        if old_m.empty or key not in old_m.index:
+            new_models.append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Rank": row.get('Rank'), "Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
+    results["Samsung_Added"] = pd.DataFrame(new_models)
+
+    del_models = []
+    for _, row in sams_old.iterrows():
+        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
+        if new_m.empty or key not in new_m.index:
+            del_models.append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Previous Rank": row.get('Rank'), "Previous Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
+    results["Samsung_Deleted"] = pd.DataFrame(del_models)
+
+    # Case 7: Rank 1 변경
+    rank1_changes = []
+    if not new_df.empty and not old_df.empty:
+        temp_new = new_df.copy()
+        temp_old = old_df.copy()
+        temp_new['n_rank'] = pd.to_numeric(temp_new['Rank'], errors='coerce')
+        temp_old['n_rank'] = pd.to_numeric(temp_old['Rank'], errors='coerce')
+
+        for (sc, cat, sub), g_new in temp_new.groupby(['SuperCategory', 'Category', 'SubCategory']):
+            g_old = temp_old[(temp_old['SuperCategory']==sc) & (temp_old['Category']==cat) & (temp_old['SubCategory']==sub)]
+            if g_old.empty: continue
+            
+            n1 = g_new[g_new['n_rank']==1]
+            o1 = g_old[g_old['n_rank']==1]
+            if not n1.empty and not o1.empty:
+                n1_brand = str(n1['Brand'].iloc[0])
+                n1_prod = str(n1['Product'].iloc[0])
+                o1_brand = str(o1['Brand'].iloc[0])
+                o1_prod = str(o1['Product'].iloc[0])
+                
+                if n1_prod != o1_prod:
+                    # 기존 1위 현재
+                    cur_o1 = g_new[g_new['Product']==o1_prod]
+                    c_rank = cur_o1['Rank'].iloc[0] if not cur_o1.empty else "Out of Rank"
+                    c_score = cur_o1['Overall Score'].iloc[0] if not cur_o1.empty else "N/A"
+                    # 신규 1위 과거
+                    pre_n1 = g_old[g_old['Product']==n1_prod]
+                    p_rank = pre_n1['Rank'].iloc[0] if not pre_n1.empty else "New Entry"
+                    p_score = pre_n1['Overall Score'].iloc[0] if not pre_n1.empty else "N/A"
+                    
+                    rank1_changes.append({
+                        "SuperCategory": sc, "Category": cat, "SubCategory": sub,
+                        "Previous 1st Brand": o1_brand, "Previous 1st Product": o1_prod,
+                        "Current 1st Brand": n1_brand, "Current 1st Product": n1_prod,
+                        "Old 1st Current Rank": c_rank, "Old 1st Current Score": c_score,
+                        "New 1st Previous Rank": p_rank, "New 1st Previous Score": p_score
+                    })
+    results["Rank1_Changes"] = pd.DataFrame(rank1_changes)
+
+    return results
 
 def generate_summary(all_data):
     """SuperCategory, Category, SubCategory별로 Samsung/Dacor 및 Best 브랜드 요약 정보를 생성합니다."""
@@ -514,48 +614,62 @@ def save_checkpoint(data_dict, file_path, prev_data):
     except Exception as e:
         logger.error(f"Checkpoint save error: {e}")
 
-def send_email_report(all_data, changes, extract_time, data_file, report_file):
+def send_email_report(all_data, delta_results, extract_time, data_file, report_file):
     """크롤링 결과를 이메일로 송부합니다."""
     smtp_server = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     sender_email = os.getenv("SENDER_EMAIL")
-    sender_password = os.getenv("SENDER_PASSWORD") # 앱 비밀번호 권장
+    sender_password = os.getenv("SENDER_PASSWORD")
     receiver_email = "jongbin.yun@samsung.com"
 
     if not sender_email or not sender_password:
-        logger.warning("이메일 발신 정보(SENDER_EMAIL/PASSWORD)가 설정되지 않아 메일을 보낼 수 없습니다.")
         return
 
     # 요약 정보 계산
     total_categories = sum(len(v) for v in SUPERCATEGORIES.values())
     collected_count = sum(len(records) for records in all_data.values())
-    success_count = sum(1 for sc in all_data.values() for _ in sc if _ ) # 실제 데이터가 있는 카테고리 수 등 필요시 수정
     
-    # 델타 요약
-    new_models = len([c for c in changes if c.get("Attribute") == "New Model"])
-    updates = len(changes) - new_models
-    
-    msg = MIMEMultipart()
-    msg['From'] = sender_email
-    msg['To'] = receiver_email
-    msg['Subject'] = f"[CR Crawl] 결과 요약 ({extract_time})"
-
-    # Summary 데이터 생성
+    # 1. Category Summary
     summary_df = generate_summary(all_data)
     summary_html = ""
     if not summary_df.empty:
         summary_html = "<h4>[Category Summary]</h4>"
-        # HTML 테이블 생성 및 스타일 적용
         tbl_html = summary_df.to_html(index=False, border=1, justify='center', na_rep='')
         tbl_html = tbl_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 11px; margin-bottom: 20px;"')
-        tbl_html = tbl_html.replace('<th', '<th style="background-color: #004684; color: white; border: 1px solid #ddd; padding: 8px; text-align: center;"')
+        
+        # 헤더별 배경색 지정 (삼성: 파랑, Best: 빨강, 나머지: 회색)
+        for col in summary_df.columns:
+            bg_color = "#666666" # 중립
+            if "Samsung" in col:
+                bg_color = "#004684" # 파랑
+            elif "Best" in col:
+                bg_color = "#B22222" # 빨강
+            
+            target_th = f'<th>{col}</th>'
+            replace_th = f'<th style="background-color: {bg_color}; color: white; border: 1px solid #ddd; padding: 8px; text-align: center;">{col}</th>'
+            tbl_html = tbl_html.replace(target_th, replace_th)
+
         tbl_html = tbl_html.replace('<td', '<td style="border: 1px solid #ddd; padding: 6px; text-align: center;"')
-        
-        # Samsung 브랜드 강조 (색상 등)
-        tbl_html = tbl_html.replace('Samsung', '<b style="color: #004684;">Samsung</b>')
-        tbl_html = tbl_html.replace('Dacor', '<b style="color: #004684;">Dacor</b>')
-        
+        # 본문 내 브랜드명 강조 (색상 없이 볼드체만)
+        tbl_html = tbl_html.replace('Samsung', '<b>Samsung</b>').replace('Dacor', '<b>Dacor</b>')
         summary_html += tbl_html
+
+    # 2. Delta Report Summary
+    delta_html = "<h4>[Delta Report Summary]</h4>"
+    delta_exist = False
+    for title, df in delta_results.items():
+        if df is not None and not df.empty:
+            delta_exist = True
+            delta_html += f"<b>* {title}</b>"
+            # 시인성 좋은 테이블 스타일링
+            t_html = df.to_html(index=False, border=1, justify='center', na_rep='')
+            t_html = t_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 10px; margin-bottom: 15px;"')
+            t_html = t_html.replace('<th', '<th style="background-color: #555; color: white; border: 1px solid #ddd; padding: 5px;"')
+            t_html = t_html.replace('<td', '<td style="border: 1px solid #ddd; padding: 4px; text-align: center;"')
+            delta_html += t_html
+    
+    if not delta_exist:
+        delta_html += "<p>변동 사항 없음</p>"
 
     body = f"""
     <h3>Consumer Report 크롤링 결과 요약</h3>
@@ -565,20 +679,18 @@ def send_email_report(all_data, changes, extract_time, data_file, report_file):
         <li><b>성공률:</b> {collected_count}개 모델 수집됨 (대상 카테고리: {total_categories}개)</li>
     </ul>
 
+    {delta_html}
     {summary_html}
-    
-    <h4>[델타 결과 요약]</h4>
-    <ul>
-        <li><b>신규 모델 추가:</b> {new_models}건</li>
-        <li><b>기존 모델 변경:</b> {updates}건</li>
-        <li><b>총 변경 사항:</b> {len(changes)}건</li>
-    </ul>
     
     <p>상세 내용은 첨부된 파일을 확인해 주세요.</p>
     """
+    
+    msg = MIMEMultipart()
+    msg['From'] = sender_email
+    msg['To'] = receiver_email
+    msg['Subject'] = f"[CR Crawl] 결과 요약 ({extract_time})"
     msg.attach(MIMEText(body, 'html'))
 
-    # 파일 첨부
     for f_path in [data_file, report_file]:
         if os.path.exists(f_path):
             with open(f_path, "rb") as attachment:
@@ -742,33 +854,45 @@ def main():
 
     # Step 3: Delta Report
     logger.info("\nDelta 리포트 생성 중...")
-    changes = []
+    
+    # 비교를 위해 전체 데이터를 하나의 DataFrame으로 통합
+    all_new_list = []
     for sc, records in all_data.items():
-        if not records: continue
-        df_new = pd.DataFrame(records)
-        df_old = prev_data.get(sc, pd.DataFrame())
-        changes.extend(generate_delta_report(df_old, df_new, sc))
+        all_new_list.extend(records)
+    new_combined_df = pd.DataFrame(all_new_list)
 
-    # 1. 고정 파일명으로 저장 (다음 크롤링 시 이전 데이터로 비교하기 위해 필수)
+    all_old_list = []
+    for sc, df in prev_data.items():
+        all_old_list.append(df)
+    old_combined_df = pd.concat(all_old_list, ignore_index=True) if all_old_list else pd.DataFrame()
+
+    delta_results = generate_delta_report_v2(old_combined_df, new_combined_df)
+
+    # 1. 고정 파일명으로 저장
     save_checkpoint(all_data, FILE_PATH_ALL_DATA, prev_data)
-    if changes:
-        pd.DataFrame(changes).to_excel(FILE_PATH_REPORT, index=False)
-    else:
-        pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(FILE_PATH_REPORT, index=False)
+    
+    # Delta Report 엑셀 저장 (멀티 시트)
+    changes_found = any(not df.empty for df in delta_results.values())
+    try:
+        with pd.ExcelWriter(FILE_PATH_REPORT, engine='openpyxl') as writer:
+            if changes_found:
+                for sheet_name, df_delta in delta_results.items():
+                    if not df_delta.empty:
+                        df_delta.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                pd.DataFrame([{"Message": "변경사항 없음", "Checked_At": extract_time}]).to_excel(writer, sheet_name="No_Changes", index=False)
+    except Exception as e:
+        logger.error(f"Delta Report save error: {e}")
 
-    # 2. 타임스탬프 파일명으로 저장 (아카이빙 및 이메일용)
+    # 2. 타임스탬프 파일명으로 저장
     ts_data_file = get_timestamped_filename(FILE_PATH_ALL_DATA)
     ts_report_file = get_timestamped_filename(FILE_PATH_REPORT)
     
-    # 저장 경로를 명확히 하기 위해 절대 경로 로깅
     shutil.copy(FILE_PATH_ALL_DATA, ts_data_file)
     shutil.copy(FILE_PATH_REPORT, ts_report_file)
 
-    logger.info(f"아카이빙 완료: {os.path.abspath(ts_data_file)}")
-    logger.info(f"델타 리포트: {os.path.abspath(ts_report_file)}")
-
     # 이메일 발송
-    send_email_report(all_data, changes, extract_time, ts_data_file, ts_report_file)
+    send_email_report(all_data, delta_results, extract_time, ts_data_file, ts_report_file)
 
     logger.info("통합 크롤링 및 아카이빙 완료!")
 
