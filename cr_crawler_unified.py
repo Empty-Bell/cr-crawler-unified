@@ -10,7 +10,7 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import pandas as pd
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
@@ -26,6 +26,15 @@ load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+def get_now_kst():
+    """한국 시간(KST, UTC+9)을 반환합니다."""
+    return datetime.now(timezone(timedelta(hours=9)))
+
+# 로깅 시간을 KST로 설정
+def kst_converter(*args):
+    return get_now_kst().timetuple()
+logging.Formatter.converter = kst_converter
 
 # ============================================================
 # 모든 URL은 기존 개별 크롤러 py 파일에서 정상 동작 확인된 것만 사용
@@ -111,8 +120,8 @@ FILE_PATH_ALL_DATA = "CR_All_Data_Latest.xlsx"
 FILE_PATH_REPORT = "CR_Delta_Report.xlsx"
 
 def get_timestamped_filename(base_name):
-    """파일명 뒤에 _YYYYMMDDHHMM 형식을 붙입니다."""
-    ts = datetime.now().strftime("%y%m%d%H%M")
+    """파일명 뒤에 _YYYYMMDDHHMM 형식을 붙입니다. (KST 기준)"""
+    ts = get_now_kst().strftime("%y%m%d%H%M")
     name, ext = os.path.splitext(base_name)
     return f"{name}_{ts}{ext}"
 
@@ -525,7 +534,7 @@ def main():
         logger.warning(f"이전 데이터 파일을 찾을 수 없습니다: {abs_data_path}")
         logger.warning("모든 데이터가 '신규 모델'로 인식됩니다.")
 
-    extract_time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    extract_time = get_now_kst().strftime("%Y-%m-%d %H:%M:%S")
 
     # Step 1: 로그인 세션 생성
     first_url = list(SUPERCATEGORIES.values())[0][0]["url"]
