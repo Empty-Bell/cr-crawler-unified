@@ -58,7 +58,8 @@ SUPERCATEGORIES = {
         {"name": "Front-Load Washers", "url": "https://www.consumerreports.org/appliances/washing-machines/front-load-washer/c28739/"},
         {"name": "Top-Load Agitator Washers", "url": "https://www.consumerreports.org/appliances/washing-machines/top-load-agitator-washer/c32002/"},
         {"name": "Top-Load HE Washers", "url": "https://www.consumerreports.org/appliances/washing-machines/top-load-he-washer/c37107/"},
-        {"name": "Compact Washers", "url": "https://www.consumerreports.org/appliances/washing-machines/compact-washers/c37106/"}
+        {"name": "Compact Washers", "url": "https://www.consumerreports.org/appliances/washing-machines/compact-washers/c37106/"},
+        {"name": "Washer-Dryer Combos", "url": "https://www.consumerreports.org/appliances/washer-dryer-combo/c200858/"}
     ],
     # --- cr_crawler_dryers.py (lines 258-261) ---
     "Clothes Dryers": [
@@ -338,7 +339,10 @@ def extract_ratings(driver):
                         else { val = cell.innerText.trim().replace(/\\s+/g, ' '); }
                     }
                 }
-                if (lhi.name === 'Price' && val.includes('Shop')) val = val.split('Shop')[0].trim();
+                if (lhi.name === 'Price') {
+                    if (val.includes('Shop')) val = val.split('Shop')[0].trim();
+                    val = val.replace(/from/gi, '').replace(/\$/g, '').replace(/,/g, '').trim();
+                }
                 rd[lhi.name] = val;
             });
             if (Object.keys(rd).length > 1) all_data.push(rd);
@@ -622,7 +626,29 @@ def save_checkpoint(data_dict, file_path, prev_data):
                 cols = list(df.columns)
                 order = ['SuperCategory', 'Category', 'SubCategory', 'Rank', 'Brand', 'Product', 'Overall Score', 'Price', 'Extracted_At']
                 final = [c for c in order if c in cols] + [c for c in cols if c not in order]
+                
+                # 'Price' 컬럼을 숫자로 변환 (이미 JS에서 처리했으나 한번 더 보장)
+                if 'Price' in df.columns:
+                    df['Price'] = pd.to_numeric(df['Price'], errors='coerce')
+                
                 df[final].to_excel(writer, sheet_name=sc, index=False)
+                
+                # openpyxl을 사용하여 가격 컬럼에 통화 서식 적용
+                workbook = writer.book
+                worksheet = writer.sheets[sc]
+                
+                # 'Price' 컬럼 인덱스 찾기 (1-based)
+                price_idx = None
+                for idx, col_name in enumerate(final, 1):
+                    if col_name == 'Price':
+                        price_idx = idx
+                        break
+                
+                if price_idx:
+                    # 데이터 행들에 서식 적용 (헤더 제외)
+                    for row in range(2, len(df) + 2):
+                        cell = worksheet.cell(row=row, column=price_idx)
+                        cell.number_format = '$#,##0.00'
     except Exception as e:
         logger.error(f"Checkpoint save error: {e}")
 
