@@ -425,8 +425,8 @@ def generate_delta_report_v2(old_df, new_df):
             if bc in row_old and bc in row_new:
                 vo, vn = str(row_old[bc]).strip(), str(row_new[bc]).strip()
                 # 빈 값 정규화
-                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-"] else vo
-                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-"] else vn
+                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vo
+                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vn
                 
                 if vo_n != vn_n:
                     brand_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo_n, "New": vn_n})
@@ -438,8 +438,8 @@ def generate_delta_report_v2(old_df, new_df):
             if lc in row_old and lc in row_new:
                 vo, vn = str(row_old[lc]).strip(), str(row_new[lc]).strip()
                 # 빈 값 정규화
-                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-"] else vo
-                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-"] else vn
+                vo_n = "" if vo.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vo
+                vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vn
                 
                 if vo_n != vn_n:
                     # 수치 오차 무시 로직 (둘 다 숫자일 때만)
@@ -453,8 +453,8 @@ def generate_delta_report_v2(old_df, new_df):
         if not b_changed and not l_changed:
             vo_s = str(row_old.get('Overall Score', '')).strip()
             vn_s = str(row_new.get('Overall Score', '')).strip()
-            vo_s = "" if vo_s.lower() in ["nan", "none", "", "n/a", "-"] else vo_s
-            vn_s = "" if vn_s.lower() in ["nan", "none", "", "n/a", "-"] else vn_s
+            vo_s = "" if vo_s.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vo_s
+            vn_s = "" if vn_s.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vn_s
             
             if vo_s != vn_s:
                 score_only_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Previous Score": vo_s, "New Score": vn_s})
