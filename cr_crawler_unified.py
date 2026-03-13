@@ -341,7 +341,7 @@ def extract_ratings(driver):
                 }
                 if (lhi.name === 'Price') {
                     if (val.includes('Shop')) val = val.split('Shop')[0].trim();
-                    val = val.replace(/from/gi, '').replace(/\$/g, '').replace(/,/g, '').trim();
+                    val = val.replace(/from/gi, '').replace(/\\$/g, '').replace(/,/g, '').trim();
                 }
                 rd[lhi.name] = val;
             });
