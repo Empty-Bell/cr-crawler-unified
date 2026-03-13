@@ -362,23 +362,22 @@ def extract_ratings(driver):
 # ============================================================
 # Delta 비교 분석
 # ============================================================
-def generate_delta_report_v2(old_df, new_df):
+def generate_delta_report_v2(old_df, new_df, sc_name):
     """
-    7가지 케이스에 대한 델타 리포트를 생성합니다.
-    결과는 {시트명: 데이터프레임} 형태의 딕셔너리로 반환합니다.
+    특정 SuperCategory(시트)에 대한 델타 리포트 정보를 리스트 형태로 반환합니다.
     """
-    results = {
-        "Brand_Metrics": pd.DataFrame(),
-        "Lab_Test_Changes": pd.DataFrame(),
-        "Score_Only_Changes": pd.DataFrame(),
-        "Column_Config": pd.DataFrame(),
-        "Samsung_Added": pd.DataFrame(),
-        "Samsung_Deleted": pd.DataFrame(),
-        "Rank1_Changes": pd.DataFrame()
+    changes = {
+        "Brand_Metrics": [],
+        "Lab_Test_Changes": [],
+        "Score_Only_Changes": [],
+        "Column_Config": [],
+        "Samsung_Added": [],
+        "Samsung_Deleted": [],
+        "Rank1_Changes": []
     }
 
     if old_df.empty and new_df.empty:
-        return results
+        return changes
 
     # 공통 비교 키
     KEY_COLS = ['SuperCategory', 'Category', 'SubCategory', 'Brand', 'Product']
@@ -401,10 +400,6 @@ def generate_delta_report_v2(old_df, new_df):
 
     old_m = prepare_df(old_df)
     new_m = prepare_df(new_df)
-
-    brand_changes = []
-    lab_changes = []
-    score_only_changes = []
 
     all_cols = list(set(old_m.columns) | set(new_m.columns))
     # 브랜드 지표 유연한 매칭
@@ -433,7 +428,7 @@ def generate_delta_report_v2(old_df, new_df):
                 vn_n = "" if vn.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vn
                 
                 if vo_n != vn_n:
-                    brand_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo_n, "New": vn_n})
+                    changes["Brand_Metrics"].append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Attribute": bc, "Previous": vo_n, "New": vn_n})
                     b_changed.append(bc)
 
         # Case 2: Lab Test Evaluation
@@ -450,7 +445,7 @@ def generate_delta_report_v2(old_df, new_df):
                     try:
                         if float(vo_n) == float(vn_n): continue
                     except: pass
-                    lab_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Attribute": lc, "Previous": vo_n, "New": vn_n})
+                    changes["Lab_Test_Changes"].append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Attribute": lc, "Previous": vo_n, "New": vn_n})
                     l_changed.append(lc)
         
         # Case 3: Overall Score Only Change (1, 2번 변동이 없을 때만)
@@ -461,54 +456,47 @@ def generate_delta_report_v2(old_df, new_df):
             vn_s = "" if vn_s.lower() in ["nan", "none", "", "n/a", "-", "na", "null"] else vn_s
             
             if vo_s != vn_s:
-                score_only_changes.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Previous Score": vo_s, "New Score": vn_s})
+                changes["Score_Only_Changes"].append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Brand": brand, "Product": prod, "Previous Score": vo_s, "New Score": vn_s})
 
-    results["Brand_Metrics"] = pd.DataFrame(brand_changes).drop_duplicates() if brand_changes else pd.DataFrame()
-    results["Lab_Test_Changes"] = pd.DataFrame(lab_changes)
-    results["Score_Only_Changes"] = pd.DataFrame(score_only_changes)
-
-    # Case 4: Lab Test 항목 구성 변경 (요약 컬럼 제외)
-    col_diffs = []
+    # Case 4: Category별 컬럼 구성 변경
     if not new_df.empty and not old_df.empty:
-        for (sc, cat, sub), g_new in new_df.groupby(['SuperCategory', 'Category', 'SubCategory']):
-            g_old = old_df[(old_df['SuperCategory']==sc) & (old_df['Category']==cat) & (old_df['SubCategory']==sub)]
+        for (cat, sub), g_new in new_df.groupby(['Category', 'SubCategory']):
+            g_old = old_df[(old_df['Category']==cat) & (old_df['SubCategory']==sub)]
             if not g_old.empty:
-                added = set(g_new.columns) - set(g_old.columns)
-                removed = set(g_old.columns) - set(g_new.columns)
+                # 실제로 해당 카테고리 기기에 값이 존재하는 컬럼들만 비교 대상으로 추출
+                new_full_cols = [c for c in g_new.columns if g_new[c].notna().any()]
+                old_full_cols = [c for c in g_old.columns if g_old[c].notna().any()]
+
+                added = set(new_full_cols) - set(old_full_cols)
+                removed = set(old_full_cols) - set(new_full_cols)
                 added = [a for a in added if a not in SKIP_COLS and not a.startswith("Samsung_") and not a.startswith("Best_")]
                 removed = [r for r in removed if r not in SKIP_COLS and not r.startswith("Samsung_") and not r.startswith("Best_")]
-                for a in added: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": a, "Change": "Added"})
-                for r in removed: col_diffs.append({"SuperCategory": sc, "Category": cat, "SubCategory": sub, "Attribute": r, "Change": "Removed"})
-    results["Column_Config"] = pd.DataFrame(col_diffs)
+                for a in added: changes["Column_Config"].append({"SuperCategory": sc_name, "Category": cat, "SubCategory": sub, "Attribute": a, "Change": "Added"})
+                for r in removed: changes["Column_Config"].append({"SuperCategory": sc_name, "Category": cat, "SubCategory": sub, "Attribute": r, "Change": "Removed"})
 
     # Case 5/6: Samsung/Dacor 신규 및 삭제
-    sams_new = new_df[new_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not new_df.empty else pd.DataFrame()
-    sams_old = old_df[old_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not old_df.empty else pd.DataFrame()
+    sams_new = new_df[new_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not new_df.empty and 'Brand' in new_df.columns else pd.DataFrame()
+    sams_old = old_df[old_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not old_df.empty and 'Brand' in old_df.columns else pd.DataFrame()
     
-    new_models = []
     for _, row in sams_new.iterrows():
         key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
         if old_m.empty or key not in old_m.index:
-            new_models.append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Rank": row.get('Rank'), "Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
-    results["Samsung_Added"] = pd.DataFrame(new_models)
+            changes["Samsung_Added"].append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Rank": row.get('Rank'), "Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
 
-    del_models = []
     for _, row in sams_old.iterrows():
         key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
         if new_m.empty or key not in new_m.index:
-            del_models.append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Previous Rank": row.get('Rank'), "Previous Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
-    results["Samsung_Deleted"] = pd.DataFrame(del_models)
+            changes["Samsung_Deleted"].append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Previous Rank": row.get('Rank'), "Previous Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
 
     # Case 7: Rank 1 변경
-    rank1_changes = []
     if not new_df.empty and not old_df.empty:
         temp_new = new_df.copy()
         temp_old = old_df.copy()
         temp_new['n_rank'] = pd.to_numeric(temp_new['Rank'], errors='coerce')
         temp_old['n_rank'] = pd.to_numeric(temp_old['Rank'], errors='coerce')
 
-        for (sc, cat, sub), g_new in temp_new.groupby(['SuperCategory', 'Category', 'SubCategory']):
-            g_old = temp_old[(temp_old['SuperCategory']==sc) & (temp_old['Category']==cat) & (temp_old['SubCategory']==sub)]
+        for (cat, sub), g_new in temp_new.groupby(['Category', 'SubCategory']):
+            g_old = temp_old[(temp_old['Category']==cat) & (temp_old['SubCategory']==sub)]
             if g_old.empty: continue
             
             n1 = g_new[g_new['n_rank']==1]
@@ -529,8 +517,8 @@ def generate_delta_report_v2(old_df, new_df):
                     p_rank = pre_n1['Rank'].iloc[0] if not pre_n1.empty else "New Entry"
                     p_score = pre_n1['Overall Score'].iloc[0] if not pre_n1.empty else "N/A"
                     
-                    rank1_changes.append({
-                        "SuperCategory": sc, "Category": cat, "SubCategory": sub,
+                    changes["Rank1_Changes"].append({
+                        "SuperCategory": sc_name, "Category": cat, "SubCategory": sub,
                         "Previous 1st Brand": o1_brand, "Previous 1st Product": o1_prod,
                         "Current 1st Brand": n1_brand, "Current 1st Product": n1_prod,
                         "Old 1st Current Rank": c_rank, "Old 1st Current Score": c_score,
@@ -894,18 +882,31 @@ def main():
     # Step 3: Delta Report
     logger.info("\nDelta 리포트 생성 중...")
     
-    # 비교를 위해 전체 데이터를 하나의 DataFrame으로 통합
-    all_new_list = []
-    for sc, records in all_data.items():
-        all_new_list.extend(records)
-    new_combined_df = pd.DataFrame(all_new_list)
+    delta_results = {
+        "Brand_Metrics": [],
+        "Lab_Test_Changes": [],
+        "Score_Only_Changes": [],
+        "Column_Config": [],
+        "Samsung_Added": [],
+        "Samsung_Deleted": [],
+        "Rank1_Changes": []
+    }
 
-    all_old_list = []
-    for sc, df in prev_data.items():
-        all_old_list.append(df)
-    old_combined_df = pd.concat(all_old_list, ignore_index=True) if all_old_list else pd.DataFrame()
+    for sc_name in SUPERCATEGORIES.keys():
+        df_new = pd.DataFrame(all_data.get(sc_name, []))
+        df_old = prev_data.get(sc_name, pd.DataFrame())
+        
+        if not df_new.empty or not df_old.empty:
+            logger.info(f"Comparing {sc_name}...")
+            sheet_delta = generate_delta_report_v2(df_old, df_new, sc_name)
+            for key in delta_results.keys():
+                delta_results[key].extend(sheet_delta[key])
 
-    delta_results = generate_delta_report_v2(old_combined_df, new_combined_df)
+    # 리스트를 데이터프레임으로 변환
+    for key in delta_results.keys():
+        delta_results[key] = pd.DataFrame(delta_results[key])
+        if not delta_results[key].empty:
+            delta_results[key] = delta_results[key].drop_duplicates()
 
     # 1. 고정 파일명으로 저장
     save_checkpoint(all_data, FILE_PATH_ALL_DATA, prev_data)
