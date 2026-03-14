@@ -524,9 +524,7 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
                         "Old 1st Current Rank": c_rank, "Old 1st Current Score": c_score,
                         "New 1st Previous Rank": p_rank, "New 1st Previous Score": p_score
                     })
-    results["Rank1_Changes"] = pd.DataFrame(rank1_changes)
-
-    return results
+    return changes
 
 def generate_summary(all_data):
     """SuperCategory, Category, SubCategory별로 Samsung/Dacor 및 Best 브랜드 요약 정보를 생성합니다."""
