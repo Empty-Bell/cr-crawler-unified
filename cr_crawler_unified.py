@@ -371,8 +371,8 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
         "Lab_Test_Changes": [],
         "Score_Only_Changes": [],
         "Column_Config": [],
-        "Samsung_Added": [],
-        "Samsung_Deleted": [],
+        "Model_Added": [],
+        "Model_Deleted": [],
         "Rank1_Changes": []
     }
 
@@ -474,19 +474,37 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
                 for a in added: changes["Column_Config"].append({"SuperCategory": sc_name, "Category": cat, "SubCategory": sub, "Attribute": a, "Change": "Added"})
                 for r in removed: changes["Column_Config"].append({"SuperCategory": sc_name, "Category": cat, "SubCategory": sub, "Attribute": r, "Change": "Removed"})
 
-    # Case 5/6: Samsung/Dacor 신규 및 삭제
-    sams_new = new_df[new_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not new_df.empty and 'Brand' in new_df.columns else pd.DataFrame()
-    sams_old = old_df[old_df['Brand'].fillna('').astype(str).str.upper().isin(TARGET_BRANDS)] if not old_df.empty and 'Brand' in old_df.columns else pd.DataFrame()
+    # Case 5/6: 전 브랜드 신규 및 삭제 (삼성/LG 하이라이트)
+    HIGHLIGHT_BRANDS = ['SAMSUNG', 'LG', 'DACOR']
     
-    for _, row in sams_new.iterrows():
-        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
+    for _, row in new_df.iterrows():
+        brand = str(row.get('Brand','')).strip()
+        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), brand, str(row.get('Product','')))
         if old_m.empty or key not in old_m.index:
-            changes["Samsung_Added"].append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Rank": row.get('Rank'), "Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
+            display_brand = brand
+            if brand.upper() in HIGHLIGHT_BRANDS:
+                display_brand = f"★ {brand}"
+            changes["Model_Added"].append({
+                "SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), 
+                "SubCategory": row.get('SubCategory'), "Rank": row.get('Rank'), 
+                "Brand": display_brand, "Overall Score": row.get('Overall Score'), 
+                "Product": row.get('Product')
+            })
 
-    for _, row in sams_old.iterrows():
-        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), str(row.get('Brand','')), str(row.get('Product','')))
-        if new_m.empty or key not in new_m.index:
-            changes["Samsung_Deleted"].append({"SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), "SubCategory": row.get('SubCategory'), "Previous Rank": row.get('Rank'), "Previous Overall Score": row.get('Overall Score'), "Product": row.get('Product')})
+    if not old_df.empty:
+        for _, row in old_df.iterrows():
+            brand = str(row.get('Brand','')).strip()
+            key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), brand, str(row.get('Product','')))
+            if new_m.empty or key not in new_m.index:
+                display_brand = brand
+                if brand.upper() in HIGHLIGHT_BRANDS:
+                    display_brand = f"★ {brand}"
+                changes["Model_Deleted"].append({
+                    "SuperCategory": row.get('SuperCategory'), "Category": row.get('Category'), 
+                    "SubCategory": row.get('SubCategory'), "Previous Rank": row.get('Rank'), 
+                    "Brand": display_brand, "Previous Overall Score": row.get('Overall Score'), 
+                    "Product": row.get('Product')
+                })
 
     # Case 7: Rank 1 변경
     if not new_df.empty and not old_df.empty:
@@ -690,6 +708,11 @@ def send_email_report(all_data, delta_results, extract_time, data_file, report_f
             t_html = t_html.replace('<table', '<table style="border-collapse: collapse; width: 100%; font-family: Arial, sans-serif; font-size: 10px; margin-bottom: 15px;"')
             t_html = t_html.replace('<th', '<th style="background-color: #555; color: white; border: 1px solid #ddd; padding: 5px;"')
             t_html = t_html.replace('<td', '<td style="border: 1px solid #ddd; padding: 4px; text-align: center;"')
+            
+            # 삼성/LG 하이라이트 표시 (★를 빨간색으로, 브랜드명 볼드 처리)
+            t_html = t_html.replace('★', '<span style="color: #ff0000; font-weight: bold;">★</span>')
+            t_html = t_html.replace('SAMSUNG', '<b>SAMSUNG</b>').replace('LG', '<b>LG</b>').replace('DACOR', '<b>DACOR</b>')
+            
             delta_html += t_html
     
     if not delta_exist:
@@ -885,8 +908,8 @@ def main():
         "Lab_Test_Changes": [],
         "Score_Only_Changes": [],
         "Column_Config": [],
-        "Samsung_Added": [],
-        "Samsung_Deleted": [],
+        "Model_Added": [],
+        "Model_Deleted": [],
         "Rank1_Changes": []
     }
 
