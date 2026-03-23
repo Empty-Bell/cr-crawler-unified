@@ -379,8 +379,15 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
     if old_df.empty and new_df.empty:
         return changes
 
-    # 공통 비교 키
-    KEY_COLS = ['SuperCategory', 'Category', 'SubCategory', 'Brand', 'Product']
+    # 공통 비교 키 (기본 식별 정보)
+    BASE_KEY_COLS = ['SuperCategory', 'Category', 'SubCategory', 'Brand', 'Product']
+    # 제품을 유니크하게 식별하기 위한 추가 사양 컬럼들 (Laptops 등 전자기기 대응)
+    SPEC_COLS = ['Memory', 'Storage', 'Processor model name', 'Processor', 'Display size']
+    
+    # 실제 존재하는 사양 컬럼 확인하여 확장 키 생성
+    actual_spec_cols = [c for c in SPEC_COLS if c in new_df.columns or (not old_df.empty and c in old_df.columns)]
+    KEY_COLS = BASE_KEY_COLS + actual_spec_cols
+
     BRAND_METRIC_COLS = ["Brand Reliability", "Owner Satisfaction"]
     # 비교에서 제외할 메타 컬럼들
     SKIP_COLS = set(KEY_COLS) | {'Rank', 'Overall Score', 'Price', 'Extracted_At', 'n_rank', 'numeric_rank'}
@@ -416,7 +423,8 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
     for idx in common_idx:
         row_old = old_m.loc[idx]
         row_new = new_m.loc[idx]
-        sc, cat, sub, brand, prod = idx
+        # MultiIndex 튜플에서 기본 5개 필드 추출 (나머지는 스펙)
+        sc, cat, sub, brand, prod = idx[:5]
 
         # Case 1: Brand Metrics
         b_changed = []
@@ -479,7 +487,8 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
     
     for _, row in new_df.iterrows():
         brand = str(row.get('Brand','')).strip()
-        key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), brand, str(row.get('Product','')))
+        # 확장된 KEY_COLS를 사용하여 복합 키 생성
+        key = tuple(str(row.get(c, '')).strip() for c in KEY_COLS)
         if old_m.empty or key not in old_m.index:
             display_brand = brand
             if brand.upper() in HIGHLIGHT_BRANDS:
@@ -494,7 +503,8 @@ def generate_delta_report_v2(old_df, new_df, sc_name):
     if not old_df.empty:
         for _, row in old_df.iterrows():
             brand = str(row.get('Brand','')).strip()
-            key = (str(row.get('SuperCategory','')), str(row.get('Category','')), str(row.get('SubCategory','')), brand, str(row.get('Product','')))
+            # 확장된 KEY_COLS를 사용하여 복합 키 생성
+            key = tuple(str(row.get(c, '')).strip() for c in KEY_COLS)
             if new_m.empty or key not in new_m.index:
                 display_brand = brand
                 if brand.upper() in HIGHLIGHT_BRANDS:

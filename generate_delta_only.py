@@ -11,11 +11,26 @@ def generate_delta_report(old_df, new_df, supercat_name):
     pcol = 'Product' if 'Product' in new_df.columns else (new_df.columns[2] if len(new_df.columns) > 2 else None)
     if pcol is None: return changes
 
-    # 중복 제거 및 인덱스 설정
-    old_m = old_df.drop_duplicates(subset=[pcol]).set_index(pcol) if not old_df.empty and pcol in old_df.columns else pd.DataFrame()
-    new_m = new_df.drop_duplicates(subset=[pcol]).set_index(pcol) if not new_df.empty and pcol in new_df.columns else pd.DataFrame()
+    # 중량, 메모리, 용량 등 제품 사양을 구분할 수 있는 컬럼들 추가 식별자로 사용
+    spec_cols = ['Memory', 'Storage', 'Processor model name', 'Processor', 'Display size']
+    actual_specs = [c for c in spec_cols if c in new_df.columns or (not old_df.empty and c in old_df.columns)]
+    id_cols = [pcol] + actual_specs
 
-    skip = {'Extracted_At', 'Category', 'SuperCategory', 'Price', pcol}
+    # 중복 제거 및 인덱스 설정
+    def prepare_m(df, cols):
+        if df.empty: return pd.DataFrame()
+        d = df.copy()
+        for c in cols:
+            if c in d.columns:
+                d[c] = d[c].fillna('').astype(str).str.strip()
+            else:
+                d[c] = ''
+        return d.drop_duplicates(subset=cols).set_index(cols)
+
+    old_m = prepare_m(old_df, id_cols)
+    new_m = prepare_m(new_df, id_cols)
+
+    skip = {'Extracted_At', 'Category', 'SuperCategory', 'Price'} | set(id_cols)
     comp_cols = [c for c in new_df.columns if c not in skip]
 
     for model in new_m.index:
